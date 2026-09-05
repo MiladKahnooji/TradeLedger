@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# TradeLedger local data
+tradeledger.db
+*.sqlite
+*.sqlite3
+data/
+user_data/
