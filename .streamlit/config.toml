@@ -7,3 +7,4 @@ textColor = "#fafafa"
 
 [server]
 headless = true
+maxUploadSize = 10

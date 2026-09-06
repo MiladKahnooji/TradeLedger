@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS trades (
     status TEXT NOT NULL DEFAULT 'Open',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS trade_screenshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id INTEGER NOT NULL REFERENCES trades(id) ON DELETE CASCADE,
+    relative_path TEXT NOT NULL UNIQUE,
+    original_filename TEXT NOT NULL,
+    category TEXT NOT NULL,
+    caption TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -116,3 +127,11 @@ def execute(path: str | Path, query: str, parameters: tuple[Any, ...] = ()) -> i
 def delete_trade(path: str | Path, trade_id: int) -> None:
     with connect(path) as connection:
         connection.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+
+
+def fetch_trade_screenshots(path: str | Path, trade_id: int) -> list[sqlite3.Row]:
+    return fetch_all(
+        path,
+        "SELECT * FROM trade_screenshots WHERE trade_id = ? ORDER BY id",
+        (trade_id,),
+    )

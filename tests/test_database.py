@@ -90,3 +90,28 @@ def test_existing_non_null_pnl_schema_is_upgraded_without_losing_rows(tmp_path):
             ]
             == "EURUSD"
         )
+
+
+def test_screenshot_table_is_idempotent_and_existing_records_remain(tmp_path):
+    path = tmp_path / "existing.db"
+    initialize(path)
+    account_id = execute(
+        path,
+        "INSERT INTO accounts(name, broker, initial_balance) VALUES (?, ?, ?)",
+        ("Main", "Broker", "1000"),
+    )
+    execute(
+        path,
+        "INSERT INTO trades(account_id, instrument, direction, entry_price, lot_size) VALUES (?, ?, ?, ?, ?)",
+        (account_id, "EURUSD", "Long", "1.1", "1"),
+    )
+    initialize(path)
+    with connect(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM trades").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'trade_screenshots'"
+            ).fetchone()[0]
+            == 1
+        )

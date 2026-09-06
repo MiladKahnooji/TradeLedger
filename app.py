@@ -12,7 +12,22 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from tradeledger.calculations import cumulative, dashboard_stats
-from tradeledger.database import delete_trade, execute, fetch_all, fetch_one, initialize
+from tradeledger.database import (
+    execute,
+    fetch_all,
+    fetch_one,
+    fetch_trade_screenshots,
+    initialize,
+)
+from tradeledger.screenshots import (
+    CATEGORIES,
+    MAX_SCREENSHOTS_PER_TRADE,
+    delete_screenshot,
+    delete_trade_screenshots,
+    resolve_owned_path,
+    save_screenshot,
+    validate_image,
+)
 from tradeledger.validation import (
     ANALYSIS_DIRECTIONS,
     ANALYSIS_STATUSES,
@@ -25,6 +40,38 @@ from tradeledger.validation import (
 )
 
 DB_PATH = Path(os.environ.get("TRADELEDGER_DB_PATH", "tradeledger.db")).expanduser()
+SCREENSHOT_ROOT = Path(
+    os.environ.get("TRADELEDGER_SCREENSHOT_ROOT", "screenshots")
+).expanduser()
+THEMES = ("Dark", "Light")
+THEME_PALETTES = {
+    "Dark": {
+        "app": "#0B1018",
+        "surface": "#121925",
+        "surface_alt": "#1A2230",
+        "sidebar": "#101722",
+        "text": "#F4F7FB",
+        "muted": "#9AA7B8",
+        "border": "#2A3545",
+        "accent": "#4F8CFF",
+        "positive": "#3CCB7F",
+        "negative": "#FF5D6C",
+        "warning": "#F5B942",
+    },
+    "Light": {
+        "app": "#F4F7FB",
+        "surface": "#FFFFFF",
+        "surface_alt": "#EEF2F7",
+        "sidebar": "#FFFFFF",
+        "text": "#172033",
+        "muted": "#667085",
+        "border": "#D7DEE8",
+        "accent": "#2563EB",
+        "positive": "#15803D",
+        "negative": "#DC2626",
+        "warning": "#B45309",
+    },
+}
 TIMEFRAME_LABELS = {
     "weekly": "Weekly",
     "daily": "Daily",
@@ -32,6 +79,127 @@ TIMEFRAME_LABELS = {
     "h1": "H1",
     "m15": "M15",
 }
+
+
+def apply_theme(theme: str) -> None:
+    """Apply the stable, session-selected TradeLedger palette."""
+    colors = THEME_PALETTES[theme]
+    st.markdown(
+        f"""
+        <style>
+        :root {{ color-scheme: {"dark" if theme == "Dark" else "light"}; }}
+        [data-testid="stAppViewContainer"] {{ background: {colors["app"]}; color: {colors["text"]}; }}
+        [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"] {{ max-width: 1440px; padding-top: 2rem; }}
+        [data-testid="stSidebar"] {{ background: {colors["sidebar"]}; border-right: 1px solid {colors["border"]}; }}
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] label p,
+        [data-testid="stSidebar"] button {{ color: {colors["text"]} !important; }}
+        [data-testid="stSidebar"] details summary,
+        [data-testid="stSidebar"] details summary span,
+        [data-testid="stSidebar"] details summary svg {{ color: {colors["text"]} !important; fill: {colors["text"]} !important; stroke: {colors["text"]} !important; }}
+        [data-testid="stHeader"] {{ background: transparent; }}
+        h1, h2, h3, h4, [data-testid="stMarkdownContainer"] p {{ color: {colors["text"]}; }}
+        [data-testid="stMetric"] {{ background: {colors["surface"]}; border: 1px solid {colors["border"]}; border-radius: 10px; padding: 0.8rem 1rem; }}
+        [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{ color: {colors["muted"]} !important; }}
+        [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {{ color: {colors["text"]} !important; font-weight: 700; }}
+        .tl-metric {{ background: {colors["surface"]}; border: 1px solid {colors["border"]}; border-radius: 10px; padding: 0.8rem 1rem; min-height: 74px; }}
+        .tl-metric-label {{ color: {colors["muted"]}; font-size: 0.875rem; }}
+        .tl-metric-value {{ font-size: 1.65rem; font-weight: 700; line-height: 1.3; }}
+        [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, label, label p {{ color: {colors["text"]} !important; }}
+        [data-baseweb="select"] > div, [data-baseweb="input"] > div, [data-baseweb="textarea"] {{ background: {colors["surface"]}; border-color: {colors["border"]}; color: {colors["text"]}; }}
+        [data-baseweb="select"] input, [data-baseweb="select"] span, [data-baseweb="input"] input, textarea {{ color: {colors["text"]} !important; -webkit-text-fill-color: {colors["text"]}; }}
+        [data-baseweb="popover"], [role="listbox"], [role="option"] {{ background: {colors["surface"]}; color: {colors["text"]} !important; }}
+        [role="option"] {{ border-bottom: 1px solid {colors["border"]}; }}
+        [data-testid="stFileUploader"] {{ background: {colors["surface_alt"]}; border: 1px dashed {colors["border"]}; border-radius: 10px; padding: 0.35rem; }}
+        [data-testid="stFileUploader"] small, [data-testid="stFileUploader"] p {{ color: {colors["muted"]} !important; }}
+        [data-testid="stForm"] {{ background: {colors["surface"]}; border: 1px solid {colors["border"]}; border-radius: 12px; padding: 1rem 1.1rem; }}
+        .stButton > button {{ background: {colors["surface"]}; color: {colors["text"]} !important; border: 1px solid {colors["border"]}; border-radius: 8px; }}
+        .stButton > button[kind="primary"] {{ background: {colors["accent"]}; border-color: {colors["accent"]}; color: #FFFFFF !important; }}
+        .stButton > button:hover {{ border-color: {colors["accent"]}; color: {colors["accent"]} !important; }}
+        [data-testid="stAlert"] {{ border: 1px solid {colors["border"]}; }}
+        [data-testid="stExpander"] {{ background: {colors["surface"]}; border: 1px solid {colors["border"]}; border-radius: 10px; }}
+        [data-testid="stDataFrame"] {{ border: 1px solid {colors["border"]}; border-radius: 8px; }}
+        .pnl-positive {{ color: {colors["positive"]}; font-weight: 600; }}
+        .pnl-negative {{ color: {colors["negative"]}; font-weight: 600; }}
+        .pnl-neutral {{ color: {colors["muted"]}; font-weight: 600; }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def plotly_template(theme: str) -> str:
+    return "plotly_dark" if theme == "Dark" else "plotly_white"
+
+
+def chart_layout(theme: str) -> dict[str, object]:
+    colors = THEME_PALETTES[theme]
+    axis = {
+        "title_font": {"color": colors["text"]},
+        "tickfont": {"color": colors["muted"]},
+        "gridcolor": colors["border"],
+        "zerolinecolor": colors["muted"],
+    }
+    return {
+        "template": plotly_template(theme),
+        "paper_bgcolor": colors["surface"],
+        "plot_bgcolor": colors["surface"],
+        "font": {"color": colors["text"]},
+        "title_font": {"color": colors["text"]},
+        "legend": {"font": {"color": colors["text"]}},
+        "hoverlabel": {
+            "bgcolor": colors["surface_alt"],
+            "font": {"color": colors["text"]},
+        },
+        "xaxis": axis,
+        "yaxis": axis.copy(),
+    }
+
+
+def pnl_color(value: object, theme: str) -> str:
+    amount = Decimal(str(value)) if value not in (None, "") else Decimal(0)
+    palette = THEME_PALETTES[theme]
+    if amount > 0:
+        return palette["positive"]
+    if amount < 0:
+        return palette["negative"]
+    return palette["text"]
+
+
+def render_metric(column: object, label: str, value: object, theme: str) -> None:
+    if label not in {"Total realized P/L", "Average realized P/L"}:
+        column.metric(label, value)
+        return
+    display_value = fmt_money(value, signed=True)
+    color = pnl_color(value, theme)
+    column.markdown(
+        f'<div class="tl-metric"><div class="tl-metric-label">{label}</div>'
+        f'<div class="tl-metric-value" style="color:{color};">{display_value}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def screenshot_counter(existing_count: int, newly_selected_count: int) -> str:
+    remaining = max(
+        0, MAX_SCREENSHOTS_PER_TRADE - existing_count - newly_selected_count
+    )
+    selected_word = "screenshot" if newly_selected_count == 1 else "screenshots"
+    slot_word = "slot" if remaining == 1 else "slots"
+    return f"{newly_selected_count} {selected_word} selected · {remaining} of 10 screenshot {slot_word} remaining"
+
+
+def gallery_metadata(row: object) -> list[tuple[str, str]]:
+    metadata = [("Category", row["category"])]
+    if row["caption"]:
+        metadata.append(("Caption", row["caption"]))
+    metadata.extend(
+        (
+            ("Filename", row["original_filename"]),
+            ("Added", fmt_datetime(row["created_at"])),
+        )
+    )
+    return metadata
 
 
 def fmt_money(value: object, signed: bool = False) -> str:
@@ -69,15 +237,137 @@ def combine_date_time(value_date: date, value_time: time) -> str:
     return datetime.combine(value_date, value_time).isoformat(timespec="minutes")
 
 
+def screenshot_inputs(
+    existing_count: int = 0, key_prefix: str = "trade_screenshot"
+) -> list[tuple[object, str, str]]:
+    uploads = st.file_uploader(
+        "Screenshots (PNG, JPEG, or WebP; up to 10 MB each)",
+        type=["png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        help="Screenshots are stored locally and never inside SQLite.",
+    )
+    st.caption(screenshot_counter(existing_count, len(uploads)))
+    details: list[tuple[object, str, str]] = []
+    for index, upload in enumerate(uploads):
+        preview_col, fields_col = st.columns([1, 2])
+        with preview_col:
+            try:
+                validate_image(upload)
+                st.image(upload, width=150)
+            except ValueError:
+                st.warning("Preview unavailable; validation will run when saved.")
+        with fields_col:
+            st.caption(f"Selected: {upload.name}")
+            category = st.selectbox(
+                "Category",
+                CATEGORIES,
+                key=f"{key_prefix}_category_{index}",
+            )
+            caption = st.text_input(
+                "Caption (optional)", key=f"{key_prefix}_caption_{index}"
+            )
+        details.append((upload, category, caption))
+    return details
+
+
+def save_uploaded_screenshots(
+    trade_id: int, uploads: list[tuple[object, str, str]]
+) -> None:
+    for upload, category, caption in uploads:
+        try:
+            save_screenshot(
+                DB_PATH,
+                SCREENSHOT_ROOT,
+                trade_id,
+                upload,
+                category,
+                caption,
+            )
+        except ValueError as exc:
+            st.error(f"Screenshot '{getattr(upload, 'name', 'file')}': {exc}")
+        except sqlite3.Error:
+            st.error(
+                f"Screenshot '{getattr(upload, 'name', 'file')}' could not be saved. "
+                "The trade itself was kept."
+            )
+
+
+def pnl_markup(value: object) -> str:
+    if value in (None, ""):
+        return '<span class="pnl-neutral">—</span>'
+    amount = Decimal(str(value))
+    css_class = (
+        "pnl-positive"
+        if amount > 0
+        else "pnl-negative"
+        if amount < 0
+        else "pnl-neutral"
+    )
+    return f'<span class="{css_class}">{fmt_pnl(value)}</span>'
+
+
+def screenshot_gallery(trade_id: int) -> None:
+    rows = fetch_trade_screenshots(DB_PATH, trade_id)
+    if not rows:
+        st.caption("No screenshots attached.")
+        return
+    st.markdown(f"**Screenshots** · {len(rows)} attached")
+    for start in range(0, len(rows), 2):
+        columns = st.columns(min(2, len(rows) - start))
+        for column, row in zip(columns, rows[start : start + 2]):
+            with column:
+                target = None
+                try:
+                    target = resolve_owned_path(SCREENSHOT_ROOT, row["relative_path"])
+                    if not target.is_file():
+                        st.warning(
+                            f"Missing file: {row['original_filename']}. Remove stale metadata below."
+                        )
+                    else:
+                        st.image(str(target), width=320)
+                except ValueError:
+                    st.error("A screenshot path is invalid and was not opened.")
+                metadata = gallery_metadata(row)
+                st.markdown(f"**{metadata[0][1]}**")
+                for label, value in metadata[1:]:
+                    st.caption(f"{label}: {value}")
+                if target is not None and target.is_file():
+                    with st.expander("View full size"):
+                        st.image(str(target), use_container_width=True)
+                delete_key = f"delete_screenshot_{row['id']}"
+                if st.button(
+                    "Remove metadata"
+                    if target is None or not target.is_file()
+                    else "Remove",
+                    key=delete_key,
+                ):
+                    st.session_state[f"confirm_{delete_key}"] = True
+                if st.session_state.get(f"confirm_{delete_key}"):
+                    st.warning("Remove this screenshot permanently?")
+                    if st.button("Confirm removal", key=f"confirm_{delete_key}_button"):
+                        try:
+                            delete_screenshot(DB_PATH, SCREENSHOT_ROOT, row["id"])
+                            st.session_state.pop(f"confirm_{delete_key}", None)
+                            st.success("Screenshot removed.")
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        except sqlite3.Error:
+                            st.error(
+                                "Could not remove the screenshot. Please try again."
+                            )
+
+
 def add_account() -> None:
     st.subheader("New trading account")
     with st.form("account_form"):
+        st.markdown("#### Account details")
         name = st.text_input("Account name")
         broker = st.text_input("Broker name")
         balance = st.number_input(
             "Initial balance (USD)", min_value=0.0, step=100.0, format="%.2f"
         )
-        if st.form_submit_button("Create account"):
+        if st.form_submit_button("Create account", type="primary"):
             try:
                 account_name = required_text(name, "Account name")
                 broker_name = required_text(broker, "Broker name")
@@ -104,6 +394,7 @@ def analysis_label(row: object) -> str:
 def analysis_form() -> None:
     st.subheader("New pre-trade analysis")
     with st.form("analysis_form"):
+        st.markdown("#### Market context")
         instrument_value = st.text_input("Instrument", placeholder="EURUSD or XAUUSD")
         direction = st.selectbox("Intended direction", ANALYSIS_DIRECTIONS)
         analysis_date = st.date_input(
@@ -130,7 +421,7 @@ def analysis_form() -> None:
             )
         ):
             st.checkbox(item, key=f"check_{index}")
-        if st.form_submit_button("Save analysis"):
+        if st.form_submit_button("Save analysis", type="primary"):
             try:
                 values = [
                     instrument(instrument_value),
@@ -211,6 +502,7 @@ def trade_form(existing: object | None = None) -> None:
     )
     default_direction = current.get("direction", "Long")
     with st.form("trade_form"):
+        st.markdown("#### Trade details")
         account_id = st.selectbox(
             "Account",
             account_ids,
@@ -248,6 +540,7 @@ def trade_form(existing: object | None = None) -> None:
             index=TRADE_STATUSES.index(current.get("status", "Open")),
         )
         entry_default = dt_value(current.get("entry_at"))
+        st.markdown("#### Entry and pricing")
         entry_col1, entry_col2 = st.columns(2)
         with entry_col1:
             entry_day = st.date_input("Entry date", value=entry_default.date())
@@ -270,6 +563,7 @@ def trade_form(existing: object | None = None) -> None:
                 "Take profit (optional)", value=str(current.get("take_profit") or "")
             )
         if status == "Closed":
+            st.markdown("#### Exit and realized result")
             exit_default = dt_value(current.get("exit_at"))
             exit_col1, exit_col2 = st.columns(2)
             with exit_col1:
@@ -290,10 +584,27 @@ def trade_form(existing: object | None = None) -> None:
             st.caption(
                 "Exit details and realized P/L are available after marking the trade Closed."
             )
+        st.markdown("#### Screenshots")
+        existing_screenshot_count = (
+            len(fetch_trade_screenshots(DB_PATH, current["id"])) if editing else 0
+        )
+        screenshot_uploads = screenshot_inputs(
+            existing_screenshot_count,
+            "edit_trade_screenshot" if editing else "new_trade_screenshot",
+        )
         notes = st.text_area("Notes", value=current.get("notes", ""))
-        submitted = st.form_submit_button("Update trade" if editing else "Save trade")
+        submitted = st.form_submit_button(
+            "Update trade" if editing else "Save trade", type="primary"
+        )
         if submitted:
             try:
+                remaining_screenshot_slots = max(
+                    0, MAX_SCREENSHOTS_PER_TRADE - existing_screenshot_count
+                )
+                if len(screenshot_uploads) > remaining_screenshot_slots:
+                    raise ValueError(
+                        f"Select no more than {remaining_screenshot_slots} additional screenshots."
+                    )
                 data = {
                     "instrument": instrument_value,
                     "direction": direction,
@@ -348,6 +659,7 @@ def trade_form(existing: object | None = None) -> None:
                         "UPDATE trades SET account_id=?, analysis_id=?, instrument=?, direction=?, entry_at=?, exit_at=?, entry_price=?, exit_price=?, stop_loss=?, take_profit=?, lot_size=?, net_pnl=?, notes=?, status=? WHERE id=?",
                         (*values, current["id"]),
                     )
+                    save_uploaded_screenshots(current["id"], screenshot_uploads)
                     st.success(f"Trade #{current['id']} updated.")
                 else:
                     trade_id = execute(
@@ -355,6 +667,7 @@ def trade_form(existing: object | None = None) -> None:
                         "INSERT INTO trades(account_id, analysis_id, instrument, direction, entry_at, exit_at, entry_price, exit_price, stop_loss, take_profit, lot_size, net_pnl, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         values,
                     )
+                    save_uploaded_screenshots(trade_id, screenshot_uploads)
                     st.success(f"Trade #{trade_id} saved.")
                 st.rerun()
             except ValueError as exc:
@@ -391,13 +704,14 @@ def dashboard() -> None:
             "Win rate",
             f"{Decimal(stats['win_rate']).quantize(Decimal('0.1'))}%",
         ),
-        ("Total realized P/L", fmt_money(stats["total_pnl"], signed=True)),
-        ("Average realized P/L", fmt_money(stats["average"], signed=True)),
+        ("Total realized P/L", stats["total_pnl"]),
+        ("Average realized P/L", stats["average"]),
     )
+    theme = st.session_state.get("theme", "Dark")
     for row in (labels[:3], labels[3:6], labels[6:]):
         cols = st.columns(3)
         for col, (label, value) in zip(cols, row):
-            col.metric(label, value)
+            render_metric(col, label, value, theme)
     closed = sorted(
         [row for row in trades if row["status"] == "Closed"],
         key=lambda row: (row["exit_at"] or row["entry_at"], row["id"]),
@@ -421,9 +735,10 @@ def dashboard() -> None:
             title="Cumulative Realized P/L",
             xaxis_title="Trade date",
             yaxis_title="USD",
-            template="plotly_dark",
             autosize=True,
+            **chart_layout(theme),
         )
+        figure.add_hline(y=0, line_color=THEME_PALETTES[theme]["muted"], line_width=1)
         st.plotly_chart(figure, use_container_width=True)
     else:
         st.info("No closed trades yet. Add a closed trade to see realized performance.")
@@ -452,7 +767,6 @@ def trade_detail(row: object) -> None:
         ("Stop loss", row["stop_loss"] or "—"),
         ("Take profit", row["take_profit"] or "—"),
         ("Lot size", row["lot_size"]),
-        ("Net P/L", fmt_pnl(row["net_pnl"])),
         ("Linked analysis", analysis_label(analysis) if analysis else "None"),
         ("Notes", row["notes"] or "—"),
     )
@@ -461,6 +775,8 @@ def trade_detail(row: object) -> None:
         hide_index=True,
         use_container_width=True,
     )
+    st.markdown(f"Net P/L: {pnl_markup(row['net_pnl'])}", unsafe_allow_html=True)
+    screenshot_gallery(row["id"])
 
 
 def history() -> None:
@@ -547,10 +863,13 @@ def history() -> None:
                 "This permanently deletes only the selected trade. Its account and analysis will remain."
             )
             if st.button("Confirm permanent deletion", key=f"confirm_{selected}"):
-                delete_trade(DB_PATH, selected)
-                st.session_state.pop("confirm_delete", None)
-                st.success(f"Trade #{selected} deleted.")
-                st.rerun()
+                try:
+                    delete_trade_screenshots(DB_PATH, SCREENSHOT_ROOT, selected)
+                    st.session_state.pop("confirm_delete", None)
+                    st.success(f"Trade #{selected} deleted.")
+                    st.rerun()
+                except sqlite3.Error:
+                    st.error("Could not delete the trade. Please try again.")
         if st.session_state.get("edit_trade") == selected:
             trade_form(row)
 
@@ -617,6 +936,13 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     initialize(DB_PATH)
+    if "theme" not in st.session_state:
+        st.session_state["theme"] = "Dark"
+    selected_theme = st.sidebar.selectbox(
+        "Theme", THEMES, index=THEMES.index(st.session_state["theme"])
+    )
+    st.session_state["theme"] = selected_theme
+    apply_theme(selected_theme)
     st.title("TradeLedger")
     st.caption("A privacy-focused local trading journal · USD · Forex and Gold")
     page = st.sidebar.radio(

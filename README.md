@@ -30,6 +30,8 @@ python -m streamlit run app.py
 
 The app creates `tradeledger.db` on first run. It is intentionally ignored by Git; do not put real trading data in the repository.
 
+Use the sidebar theme selector to switch between Dark (the default) and Light during the current session. Trades can include up to 10 local screenshots, each up to 10 MB, in PNG, JPEG/JPG, or WebP format. Screenshot files are stored under the ignored `screenshots/` directory and only their metadata is stored in SQLite. For backups, preserve both `tradeledger.db` and the `screenshots/` directory.
+
 ## Tests and checks
 
 ```bash
